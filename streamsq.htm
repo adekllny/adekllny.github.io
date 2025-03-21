@@ -1,0 +1,468 @@
+Streaming Audio Player with Fade-Out Timer
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Audio Player with Fade-Out Timer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f7;
+        }
+        .player-container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            margin-right: 10px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        input[type="number"] {
+            width: 80px;
+            padding: 5px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        .status {
+            font-style: italic;
+            color: #666;
+            margin-top: 20px;
+        }
+        .value-display {
+            display: inline-block;
+            width: 50px;
+            text-align: right;
+            margin-left: 10px;
+        }
+        .file-input {
+            margin-bottom: 20px;
+        }
+        .progress-container {
+            height: 10px;
+            background-color: #e0e0e0;
+            border-radius: 5px;
+            margin-top: 15px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .time-display {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="player-container">
+        <h1>Streaming Audio Player with Fade-Out Timer</h1>
+        
+        <div class="file-input">
+            <label for="audio-url">Audio URL or File:</label>
+            <input type="text" id="audio-url" placeholder="Enter audio URL or use file selector" style="width: 70%; margin-right: 10px; padding: 5px;">
+            <button id="load-url-btn">Load</button>
+            <p style="margin-top: 10px; margin-bottom: 5px;">Or select from device:</p>
+            <input type="file" id="audio-file" accept="audio/*">
+        </div>
+        
+        <div class="control-group">
+            <button id="play-btn">Play</button>
+            <button id="pause-btn">Pause</button>
+            <button id="stop-btn">Stop</button>
+        </div>
+        
+        <div class="control-group">
+            <label for="volume-slider">Volume: <span id="volume-value" class="value-display">100%</span></label>
+            <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1">
+        </div>
+        
+        <div class="control-group">
+            <label for="tempo-slider">Tempo: <span id="tempo-value" class="value-display">100%</span></label>
+            <input type="range" id="tempo-slider" min="0.5" max="2" step="0.01" value="1">
+        </div>
+        
+        <div class="control-group">
+            <label for="fade-time">Fade-Out Time (seconds):</label>
+            <input type="number" id="fade-time" min="1" max="300" value="10">
+            <button id="start-fade-btn">Start Fade</button>
+            <button id="cancel-fade-btn">Cancel Fade</button>
+        </div>
+        
+        <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <div class="time-display">
+            <span id="current-time">00:00</span>
+            <span id="duration">00:00</span>
+        </div>
+        
+        <div class="status" id="status-message">No file loaded</div>
+    </div>
+
+    <script>
+        // Audio elements
+        const audio = new Audio();
+        let audioContext;
+        let source;
+        let gainNode;
+        let analyser;
+        
+        // Original values for fading
+        let originalVolume = 1;
+        let originalTempo = 1;
+        
+        // Fade timer
+        let fadeStartTime;
+        let fadeDuration;
+        let fadeInterval;
+        let isFading = false;
+        
+        // DOM elements
+        const audioUrlInput = document.getElementById('audio-url');
+        const loadUrlBtn = document.getElementById('load-url-btn');
+        const fileInput = document.getElementById('audio-file');
+        const playBtn = document.getElementById('play-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const volumeSlider = document.getElementById('volume-slider');
+        const volumeValue = document.getElementById('volume-value');
+        const tempoSlider = document.getElementById('tempo-slider');
+        const tempoValue = document.getElementById('tempo-value');
+        const fadeTimeInput = document.getElementById('fade-time');
+        const startFadeBtn = document.getElementById('start-fade-btn');
+        const cancelFadeBtn = document.getElementById('cancel-fade-btn');
+        const statusMessage = document.getElementById('status-message');
+        const progressBar = document.getElementById('progress-bar');
+        const currentTimeDisplay = document.getElementById('current-time');
+        const durationDisplay = document.getElementById('duration');
+        
+        // Initialize WebAudio API
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                gainNode = audioContext.createGain();
+                analyser = audioContext.createAnalyser();
+                
+                // Connect the media element to WebAudio
+                source = audioContext.createMediaElementSource(audio);
+                
+                // Set up the audio processing chain
+                source.connect(gainNode);
+                gainNode.connect(analyser);
+                analyser.connect(audioContext.destination);
+            }
+        }
+        
+        // Calculate current value during fade
+        function calculateCurrentValue(startValue, elapsedTime, totalFadeTime) {
+            const reductionFactor = Math.min(elapsedTime / totalFadeTime, 1);
+            const targetValue = startValue * 0.5; // 50% of original
+            return startValue - (reductionFactor * (startValue - targetValue));
+        }
+        
+        // Update UI controls
+        function updateControls() {
+            const isAudioReady = audio.src && audio.readyState > 0;
+            playBtn.disabled = !isAudioReady || (!audio.paused && !audio.ended);
+            pauseBtn.disabled = audio.paused || audio.ended;
+            stopBtn.disabled = audio.paused && audio.currentTime === 0;
+            startFadeBtn.disabled = audio.paused || audio.ended || isFading;
+            cancelFadeBtn.disabled = !isFading;
+        }
+        
+        // Format time display (mm:ss)
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        // Load audio from URL
+        loadUrlBtn.addEventListener('click', function() {
+            const url = audioUrlInput.value.trim();
+            if (url) {
+                loadAudio(url);
+            } else {
+                statusMessage.textContent = 'Please enter a valid URL';
+            }
+        });
+        
+        // Load audio file
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                const file = e.target.files[0];
+                const objectUrl = URL.createObjectURL(file);
+                loadAudio(objectUrl, file.name);
+            }
+        });
+        
+        // Common audio loading function
+        function loadAudio(url, fileName = '') {
+            // Pause any currently playing audio
+            if (!audio.paused) {
+                audio.pause();
+            }
+            
+            // Reset audio element
+            audio.currentTime = 0;
+            
+            // Set the source
+            audio.src = url;
+            
+            // Set status message
+            const displayName = fileName || url.split('/').pop() || 'audio';
+            statusMessage.textContent = `Loading: ${displayName}`;
+            
+            // Initialize audio context on first load
+            if (!audioContext) {
+                try {
+                    initAudio();
+                } catch (e) {
+                    statusMessage.textContent = `Error initializing audio: ${e.message}`;
+                    return;
+                }
+            }
+            
+            // Resume audio context if it's suspended
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            // Update UI when loaded
+            audio.addEventListener('loadedmetadata', function onMetadataLoaded() {
+                durationDisplay.textContent = formatTime(audio.duration);
+                statusMessage.textContent = `Loaded: ${displayName}`;
+                updateControls();
+                audio.removeEventListener('loadedmetadata', onMetadataLoaded);
+            });
+            
+            // Handle loading errors
+            audio.addEventListener('error', function() {
+                statusMessage.textContent = `Error loading audio: ${audio.error.message}`;
+                updateControls();
+            });
+        }
+        
+        // Play audio
+        playBtn.addEventListener('click', function() {
+            // If audio context is suspended, resume it
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            // Apply current tempo setting
+            audio.preservesPitch = false; // Enable time stretching without pitch change
+            audio.playbackRate = parseFloat(tempoSlider.value);
+            
+            // Start or resume playback
+            audio.play().catch(error => {
+                statusMessage.textContent = `Playback error: ${error.message}`;
+            });
+            
+            statusMessage.textContent = 'Playing';
+            updateControls();
+        });
+        
+        // Pause audio
+        pauseBtn.addEventListener('click', function() {
+            audio.pause();
+            
+            // Cancel fade if active
+            if (isFading) {
+                cancelFade();
+            }
+            
+            statusMessage.textContent = 'Paused';
+            updateControls();
+        });
+        
+        // Stop audio
+        stopBtn.addEventListener('click', function() {
+            audio.pause();
+            audio.currentTime = 0;
+            
+            // Cancel fade if active
+            if (isFading) {
+                cancelFade();
+            }
+            
+            statusMessage.textContent = 'Stopped';
+            updateControls();
+        });
+        
+        // Volume change
+        volumeSlider.addEventListener('input', function() {
+            const volume = parseFloat(this.value);
+            if (gainNode) {
+                gainNode.gain.value = volume;
+            }
+            volumeValue.textContent = `${Math.round(volume * 100)}%`;
+            
+            // If not fading, update original volume
+            if (!isFading) {
+                originalVolume = volume;
+            }
+        });
+        
+        // Tempo change
+        tempoSlider.addEventListener('input', function() {
+            const tempo = parseFloat(this.value);
+            audio.playbackRate = tempo;
+            tempoValue.textContent = `${Math.round(tempo * 100)}%`;
+            
+            // If not fading, update original tempo
+            if (!isFading) {
+                originalTempo = tempo;
+            }
+        });
+        
+        // Start fade
+        startFadeBtn.addEventListener('click', function() {
+            if (audio.paused || audio.ended || isFading) return;
+            
+            fadeDuration = parseFloat(fadeTimeInput.value);
+            if (isNaN(fadeDuration) || fadeDuration <= 0) {
+                statusMessage.textContent = 'Please enter a valid fade time';
+                return;
+            }
+            
+            // Record original values
+            originalVolume = parseFloat(volumeSlider.value);
+            originalTempo = parseFloat(tempoSlider.value);
+            
+            // Start fade timer
+            fadeStartTime = Date.now();
+            isFading = true;
+            
+            // Set up interval for smooth fading
+            fadeInterval = setInterval(updateFade, 50); // Update every 50ms
+            
+            statusMessage.textContent = `Fading out over ${fadeDuration} seconds`;
+            updateControls();
+        });
+        
+        // Cancel fade
+        cancelFadeBtn.addEventListener('click', cancelFade);
+        
+        function cancelFade() {
+            clearInterval(fadeInterval);
+            isFading = false;
+            statusMessage.textContent = 'Fade cancelled';
+            updateControls();
+        }
+        
+        // Update fade values
+        function updateFade() {
+            const now = Date.now();
+            const elapsedTime = (now - fadeStartTime) / 1000; // Convert to seconds
+            
+            if (elapsedTime >= fadeDuration) {
+                // Fade completed
+                volumeSlider.value = originalVolume * 0.5;
+                tempoSlider.value = originalTempo * 0.5;
+                
+                if (gainNode) {
+                    gainNode.gain.value = volumeSlider.value;
+                }
+                audio.playbackRate = parseFloat(tempoSlider.value);
+                
+                volumeValue.textContent = `${Math.round(volumeSlider.value * 100)}%`;
+                tempoValue.textContent = `${Math.round(tempoSlider.value * 100)}%`;
+                
+                clearInterval(fadeInterval);
+                isFading = false;
+                statusMessage.textContent = 'Fade completed';
+                updateControls();
+                return;
+            }
+            
+            // Calculate and set current values
+            const currentVolume = calculateCurrentValue(originalVolume, elapsedTime, fadeDuration);
+            const currentTempo = calculateCurrentValue(originalTempo, elapsedTime, fadeDuration);
+            
+            volumeSlider.value = currentVolume;
+            tempoSlider.value = currentTempo;
+            
+            if (gainNode) {
+                gainNode.gain.value = currentVolume;
+            }
+            audio.playbackRate = currentTempo;
+            
+            volumeValue.textContent = `${Math.round(currentVolume * 100)}%`;
+            tempoValue.textContent = `${Math.round(currentTempo * 100)}%`;
+        }
+        
+        // Update progress bar and time display
+        audio.addEventListener('timeupdate', function() {
+            if (audio.duration) {
+                const percentage = (audio.currentTime / audio.duration) * 100;
+                progressBar.style.width = `${percentage}%`;
+                currentTimeDisplay.textContent = formatTime(audio.currentTime);
+            }
+        });
+        
+        // Handle audio ended event
+        audio.addEventListener('ended', function() {
+            if (isFading) {
+                cancelFade();
+            }
+            statusMessage.textContent = 'Playback ended';
+            updateControls();
+        });
+        
+        // Click on progress bar to seek
+        document.querySelector('.progress-container').addEventListener('click', function(e) {
+            if (audio.duration) {
+                const rect = this.getBoundingClientRect();
+                const pos = (e.clientX - rect.left) / rect.width;
+                audio.currentTime = pos * audio.duration;
+            }
+        });
+        
+        // Initialize UI
+        updateControls();
+    </script>
+</body>
+</html>
